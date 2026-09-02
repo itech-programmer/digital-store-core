@@ -1,0 +1,18 @@
+services:
+  supplier-primary:
+    build:
+      context: ..
+      dockerfile: supplier-primary/.docker/Dockerfile
+    ports:
+      - "${SUPPLIER_PRIMARY_PORT}:${SUPPLIER_PRIMARY_PORT}"
+    environment:
+      PORT: "${SUPPLIER_PRIMARY_PORT}"
+      ERROR_RATE: "${SUPPLIER_PRIMARY_ERROR_RATE}"
+      TIMEOUT_RATE: "${SUPPLIER_PRIMARY_TIMEOUT_RATE}"
+      TIMEOUT_SECONDS: "${SUPPLIER_PRIMARY_TIMEOUT_SECONDS}"
+    networks:
+      - store
+
+networks:
+  store:
+    name: ${COMPOSE_NETWORK}

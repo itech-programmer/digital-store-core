@@ -1,0 +1,18 @@
+services:
+  supplier-fallback:
+    build:
+      context: ..
+      dockerfile: supplier-fallback/.docker/Dockerfile
+    ports:
+      - "${SUPPLIER_FALLBACK_PORT}:${SUPPLIER_FALLBACK_PORT}"
+    environment:
+      PORT: "${SUPPLIER_FALLBACK_PORT}"
+      ERROR_RATE: "${SUPPLIER_FALLBACK_ERROR_RATE}"
+      TIMEOUT_RATE: "${SUPPLIER_FALLBACK_TIMEOUT_RATE}"
+      TIMEOUT_SECONDS: "${SUPPLIER_FALLBACK_TIMEOUT_SECONDS}"
+    networks:
+      - store
+
+networks:
+  store:
+    name: ${COMPOSE_NETWORK}

@@ -1,0 +1,42 @@
+include:
+  - path: ./services/store-api/docker-compose.yml
+  - path: ./services/supplier-primary/docker-compose.yml
+  - path: ./services/supplier-fallback/docker-compose.yml
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_DB: ${DB_DATABASE}
+      POSTGRES_USER: ${DB_USERNAME}
+      POSTGRES_PASSWORD: ${DB_PASSWORD}
+    ports:
+      - "${DB_PORT}:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test:
+        [
+          "CMD-SHELL",
+          "pg_isready -U ${DB_USERNAME} -d ${DB_DATABASE}",
+        ]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+    networks:
+      - store
+
+  redis:
+    image: redis:7-alpine
+    ports:
+      - "${REDIS_PORT}:6379"
+    networks:
+      - store
+
+volumes:
+  postgres_data:
+
+networks:
+  store:
+    name: ${COMPOSE_NETWORK}
+    driver: bridge

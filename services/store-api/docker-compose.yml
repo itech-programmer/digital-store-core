@@ -1,0 +1,73 @@
+services:
+  store-api:
+    build:
+      context: .
+      dockerfile: .docker/php/Dockerfile
+    working_dir: /var/www/html
+    volumes:
+      - ./:/var/www/html
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_started
+    environment:
+      APP_ENV: local
+      APP_DEBUG: "true"
+      DB_CONNECTION: pgsql
+      DB_HOST: postgres
+      DB_PORT: 5432
+      DB_DATABASE: ${DB_DATABASE}
+      DB_USERNAME: ${DB_USERNAME}
+      DB_PASSWORD: ${DB_PASSWORD}
+      REDIS_HOST: redis
+      REDIS_PORT: 6379
+      QUEUE_CONNECTION: redis
+      SUPPLIER_PRIMARY_URL: http://supplier-primary:${SUPPLIER_PRIMARY_PORT}
+      SUPPLIER_FALLBACK_URL: http://supplier-fallback:${SUPPLIER_FALLBACK_PORT}
+    networks:
+      - store
+
+  nginx:
+    image: nginx:1.27-alpine
+    ports:
+      - "${API_PORT}:80"
+    volumes:
+      - ./.docker/nginx/default.conf:/etc/nginx/conf.d/default.conf:ro
+      - ./public:/var/www/html/public:ro
+    depends_on:
+      - store-api
+    networks:
+      - store
+
+  queue:
+    build:
+      context: .
+      dockerfile: .docker/php/Dockerfile
+    working_dir: /var/www/html
+    command: php artisan queue:work redis --queue=delivery,default --tries=3 --backoff=5,10,20 --sleep=1
+    volumes:
+      - ./:/var/www/html
+    depends_on:
+      - store-api
+      - redis
+    environment:
+      APP_ENV: local
+      DB_CONNECTION: pgsql
+      DB_HOST: postgres
+      DB_PORT: 5432
+      DB_DATABASE: ${DB_DATABASE}
+      DB_USERNAME: ${DB_USERNAME}
+      DB_PASSWORD: ${DB_PASSWORD}
+      REDIS_HOST: redis
+      QUEUE_CONNECTION: redis
+      SUPPLIER_PRIMARY_URL: http://supplier-primary:${SUPPLIER_PRIMARY_PORT}
+      SUPPLIER_FALLBACK_URL: http://supplier-fallback:${SUPPLIER_FALLBACK_PORT}
+    networks:
+      - store
+    profiles:
+      - workers
+
+networks:
+  store:
+    name: ${COMPOSE_NETWORK}
