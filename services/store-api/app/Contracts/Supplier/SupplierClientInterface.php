@@ -10,4 +10,6 @@ interface SupplierClientInterface
     public function name(): string;
 
     public function issue(SupplierIssueRequestDto $request): SupplierIssueResultDto;
+
+    public function findIssuedCode(string $requestId): ?string;
 }

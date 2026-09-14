@@ -14,6 +14,7 @@ class FinancialLedgerEntry extends Model
 
     protected $fillable = [
         'order_id',
+        'order_item_id',
         'event_type',
         'amount',
         'currency',

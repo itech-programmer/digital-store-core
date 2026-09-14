@@ -19,14 +19,7 @@ class WebhookRaceTest extends TestCase
         parent::setUp();
 
         $this->seed(CatalogSeeder::class);
-
-        Http::fake([
-            '*/issue' => Http::response([
-                'status' => 'ok',
-                'request_id' => 'ignored',
-                'code' => 'SUPPLIER-CODE',
-            ], 200),
-        ]);
+        $this->fakeHonestSupplier();
     }
 
     public function test_fifty_distinct_event_ids_produce_exactly_one_delivery(): void

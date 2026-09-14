@@ -5,7 +5,7 @@ namespace App\DTO\Order;
 final readonly class CreateOrderDto
 {
     public function __construct(
-        public string $sku,
+        public array $items,
         public ?string $publicId = null,
     ) {}
 }

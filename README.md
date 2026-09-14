@@ -1,48 +1,23 @@
 # Digital Store Core
 
-Ядро магазина цифровых товаров: заказы, платежный webhook, интеграция с поставщиками, автоматическая выдача ключей.
+Ядро магазина цифровых товаров по тестовому заданию (этапы 1 и 2).
 
-**PHP 8.4 - Laravel 11 - PostgreSQL 16 - Redis - Docker Compose**
+В заказе может быть несколько товаров, часть позиций можно выдать, а за невыданные вернуть деньги. Поставщик считается недоверенным: коды проверяются у нас. Есть восстановление после сбоев. Бонусы: ограничение частоты запросов к поставщику и просмотр состояния на дату.
 
-## Стек
+**Репозиторий:** https://github.com/itech-programmer/digital-store-core
 
-| Компонент | Технология |
-|-----------|------------|
-| API | PHP 8.4, Laravel 11 |
-| БД | PostgreSQL 16 |
-| Кэш / сессии / очереди | Redis |
-| Поставщики | HTTP-заглушки primary и fallback |
-| Проверка гонок | Python 3 (`tools/concurrency/race_test.py`) |
-| Документация API | OpenAPI / Swagger UI |
+Стек: PHP 8.4, Laravel 11, PostgreSQL 16, Redis, Docker Compose.
 
-## Структура репозитория
+---
 
-```
-digital-store-core/
-├── docker-compose.yml
-├── Makefile
-├── .env.example
-├── README.md
-├── services/
-│   ├── store-api/              Laravel API, nginx, php-fpm
-│   ├── supplier-primary/       поставщик A :8081
-│   ├── supplier-fallback/      поставщик B :8082
-│   └── supplier-stub/          общий код заглушки POST /issue
-└── tools/
-    ├── webhook/send_webhook.php
-    └── concurrency/race_test.py
-```
-
-У каждого сервиса свой `.docker/` и свой `docker-compose.yml`. Корневой compose поднимает Postgres, Redis и все сервисы.
-
-## Быстрый старт
+## 1. Запуск
 
 ### Требования
 
 - Docker и Docker Compose
-- Python 3 для `race_test.py` (стандартная библиотека, без pip)
+- Python 3 (только для скрипта `tools/concurrency/race_test.py`)
 
-### Запуск
+### Поднять стек
 
 ```bash
 cp .env.example .env
@@ -54,11 +29,16 @@ docker compose exec store-api php artisan migrate --seed
 docker compose exec store-api php artisan test
 ```
 
-После `php artisan test` база пустая из-за `RefreshDatabase`. Перед demo или race_test:
+После `php artisan test` база очищается (`RefreshDatabase`). Перед демо заново накатайте данные:
 
 ```bash
 docker compose exec store-api php artisan migrate:fresh --seed
-python tools/concurrency/race_test.py
+```
+
+Очередь выдачи (для асинхронной выдачи и демо rate limit):
+
+```bash
+docker compose --profile workers up -d
 ```
 
 ### URL
@@ -70,110 +50,188 @@ python tools/concurrency/race_test.py
 | Primary supplier | http://localhost:8081/health |
 | Fallback supplier | http://localhost:8082/health |
 
-### Makefile (Linux / macOS / WSL)
+Admin-токен по умолчанию: заголовок `X-Admin-Token: dev-admin-token` (см. `services/store-api/.env`).
 
-`make up`, `make install`, `make fresh`, `make test`, `make race`, `make catalog-bulk`, `make logs`, `make shell`
+---
 
-## Тесты
+## 2. Воспроизведение частичного сбоя и недобросовестного поставщика
+
+Поставщик отдаёт кандидата кода. Мы проверяем и сохраняем в `supplier_issuances`. Покупатель получает только `order_items.issued_code`. `product_keys` - остаток и резерв, не код покупателю. Каждый SKU идёт к своему поставщику через `products.preferred_supplier`.
+
+После смены `.env` пересоздайте stub:
 
 ```bash
-docker compose exec store-api php artisan test
+docker compose up -d --force-recreate supplier-primary supplier-fallback
 ```
 
-## Сценарии приемки
+### Переменные stub (корневой `.env`)
 
-| # | Сценарий | Как проверить |
-|---|----------|---------------|
-| 1 | 50 parallel paid по одному заказу - одна выдача | `python tools/concurrency/race_test.py`, `WebhookRaceTest` |
-| 2 | Повтор с тем же event_id - no-op | `WebhookRaceTest`, `OrderPaymentDeliveryTest` |
-| 3 | Webhook раньше заказа или вне порядка | `pending_webhooks`, `OrderPaymentDeliveryTest` |
-| 4 | Timeout поставщика, retry с тем же request_id - без дубля | `SupplierTimeoutFallbackTest`, idempotency stub |
-| 5 | Primary недоступен - fallback, одна выдача | `SupplierTimeoutFallbackTest` |
-| 6 | Пустой остаток - out_of_stock, без падения | `OrderPaymentDeliveryTest` |
+По умолчанию всё выключено (`0` / `0.0`). Для primary и fallback одни и те же смыслы.
 
-### Примеры команд
+| Переменная | Значение по умолчанию | Что делает |
+|------------|----------------------|------------|
+| `SUPPLIER_PRIMARY_ERROR_RATE` | `0.0` | доля ответов error (`supplier_unavailable`) |
+| `SUPPLIER_PRIMARY_TIMEOUT_RATE` | `0.0` | доля таймаутов |
+| `SUPPLIER_PRIMARY_TIMEOUT_SECONDS` | `30` | сколько секунд ждать при timeout |
+| `SUPPLIER_PRIMARY_DUPLICATE_CODE_RATE` | `0.0` | отдать уже выданный code другому `request_id` (мы отклоняем и refund) |
+| `SUPPLIER_PRIMARY_WRONG_CODE_RATE` | `0.0` | отдать чужой код с префиксом `WRONG-` (мы отклоняем) |
+| `SUPPLIER_PRIMARY_LIE_ERROR_RATE` | `0.0` | code сохранить, в ответе error; берём через `GET /issuances/{request_id}` |
+| `SUPPLIER_PRIMARY_RATE_LIMIT_PER_MINUTE` | `0` | лимит выдач в минуту; `0` = без лимита, иначе `429` |
+| `SUPPLIER_FALLBACK_ERROR_RATE` | `0.0` | то же для fallback |
+| `SUPPLIER_FALLBACK_TIMEOUT_RATE` | `0.0` | то же для fallback |
+| `SUPPLIER_FALLBACK_TIMEOUT_SECONDS` | `30` | то же для fallback |
+| `SUPPLIER_FALLBACK_DUPLICATE_CODE_RATE` | `0.0` | то же для fallback |
+| `SUPPLIER_FALLBACK_WRONG_CODE_RATE` | `0.0` | то же для fallback |
+| `SUPPLIER_FALLBACK_LIE_ERROR_RATE` | `0.0` | то же для fallback |
+| `SUPPLIER_FALLBACK_RATE_LIMIT_PER_MINUTE` | `0` | то же для fallback |
+| `SUPPLIER_CLIENT_RATE_LIMIT_PER_MINUTE` | `0` | лимит на стороне API-клиента к поставщику |
+
+Примеры для демо: `SUPPLIER_PRIMARY_LIE_ERROR_RATE=1.0` или `SUPPLIER_PRIMARY_RATE_LIMIT_PER_MINUTE=5` (и то же для fallback при необходимости).
+
+### Автотесты
 
 ```bash
-# гонки (50 webhook)
-python tools/concurrency/race_test.py
+docker compose exec store-api php artisan test --filter=MultiItemDeliveryTest
+docker compose exec store-api php artisan test --filter=partial_fulfillment_money
+docker compose exec store-api php artisan test --filter=UntrustedSupplierTest
+docker compose exec store-api php artisan test --filter=CrashRecoveryTest
+docker compose exec store-api php artisan test --filter=RateLimitDeliveryTest
+docker compose exec store-api php artisan test --filter=PointInTimeTest
+```
 
-# webhook вручную
-php tools/webhook/send_webhook.php --order-id=ord_xxx --event-id=evt_001 --status=paid
+Живые сценарии (по желанию): `php tools/scenarios/stage2_partial.php`, `php tools/scenarios/rate_limit_burst.php 20`.
 
-# сверка и recovery
+---
+
+## 3. Как проверить, что деньги сходятся
+
+Правило: сумма оплаты по заказу равна сумме выданных позиций плюс сумма возвратов по позициям.
+
+```text
+payment_received(order) = delivery_completed(lines) + refund_issued(lines)
+```
+
+В ledger у каждой записи уникальный `reference_id` (`pay_*`, `del_{order_item_id}`, `ref_{order_item_id}`), запись через `insertOrIgnore`, поэтому повтор шага не удваивает деньги.
+
+```bash
 curl -H "X-Admin-Token: dev-admin-token" http://localhost:8080/api/v1/admin/reconcile
-curl -X POST -H "X-Admin-Token: dev-admin-token" "http://localhost:8080/api/v1/admin/recover?stale_minutes=10"
-docker compose exec store-api php artisan orders:recover-stuck
-
-# каталог под нагрузкой
-docker compose exec store-api php artisan catalog:seed-bulk --count=5000 --keys=2
-docker compose exec store-api php artisan catalog:rebuild-stock
-curl "http://localhost:8080/api/v1/catalog/stock?page=1&per_page=100"
 ```
 
-Для воспроизведения timeout/fallback на заглушках подними `SUPPLIER_PRIMARY_TIMEOUT_RATE` или `SUPPLIER_PRIMARY_ERROR_RATE` в корневом `.env` и перезапусти compose.
+Ожидаем: `ledger_balanced: true`, `unbalanced_orders: []`, сумма оплат равна сумме выдач плюс сумма возвратов (с небольшим допуском на округление).
+
+Автотесты по деньгам и идемпотентности:
+
+```bash
+docker compose exec store-api php artisan test --filter=ReconcileAndRecoveryTest
+docker compose exec store-api php artisan test --filter=CrashRecoveryTest
+```
+
+Полный прогон: `docker compose exec store-api php artisan test` (67 тестов).
+
+---
+
+## 4. Фактическое время
+
+| Этап | Часы (оценка факта) |
+|------|---------------------|
+| Этап 1 (заказ, webhook, suppliers, recovery, Docker, тесты) | около 42 |
+| Этап 2 обязательное (несколько товаров, refund, недоверенный поставщик, crash) | около 22 |
+| Этап 2 бонусы (rate limit, point-in-time) | около 8 |
+| README и подготовка сдачи | около 2 |
+| Итого | около 74 |
+
+---
+
+## 5. Готовность к звонку
+
+Готов на звонке внести небольшое изменение (контракт API, правило проверки кода, доп. проверка в reconcile, правка режима stub и т.п.) без переписывания архитектуры.
+
+---
+
+## Архитектура: слои, SOLID, DI
+
+Запрос идёт по слоям без Action-классов:
+
+```text
+HTTP, FormRequest, DTO
+Controller
+ServiceInterface, Service
+RepositoryInterface, Repository
+Model, PostgreSQL
+```
+
+| Слой | Ответственность | Пример |
+|------|-----------------|--------|
+| Controller | HTTP вход и выход, валидация через FormRequest | `OrderController` |
+| ServiceInterface и Service | бизнес-сценарий | `OrderServiceInterface`, реализация `OrderService` |
+| RepositoryInterface и Repository | только доступ к БД | `OrderRepositoryInterface`, реализация `EloquentOrderRepository` |
+| Model | сущность Eloquent | `Order`, `OrderItem` |
+
+DI: Controllers и Services зависят от интерфейсов. Конкретные классы подключаются в `AppServiceProvider`.
+
+SOLID коротко:
+
+- S: тонкий Controller, отдельный Service, отдельный Repository
+- O: новое поведение через новую реализацию и bind интерфейса, Controllers не ломаем
+- L: тестовые подмены реализуют те же Contracts (например `SupplierClientInterface`)
+- I: узкие контракты (`OrderServiceInterface`, `OrderRepositoryInterface` и другие)
+- D: зависимость от `App\Contracts\*`, а не от Eloquent в Controllers и Services
+
+---
+
+## Архитектура этапа 2 (домен)
+
+| Тема | Решение |
+|------|---------|
+| Несколько товаров в заказе | таблица `order_items`; API `items: [{sku, qty}]` (старый вариант с одним `sku` тоже работает) |
+| Свой поставщик | `products.preferred_supplier` |
+| Частичная выдача | позиция `delivered` или `refunded`; заказ `partially_delivered`, `refunded` или `delivered` |
+| Код покупателю | только из `supplier_issuances` после проверки |
+| HTTP к поставщику | вне длинной транзакции БД |
+| Сбой | `RecoveryService` по позициям, освобождение или дожим orphan `reserved` |
+| Rate limit | stub отвечает 429, клиентский limiter, job делает `release` |
+| Состояние на дату | `domain_events` и ledger |
+
+### Структура репозитория
+
+```
+digital-store-core/
+  docker-compose.yml
+  .env.example
+  README.md
+  services/
+    store-api/
+    supplier-primary/   порт 8081
+    supplier-fallback/  порт 8082
+    supplier-stub/      POST /issue, GET /issuances/{id}
+  tools/
+    webhook/send_webhook.php
+    concurrency/race_test.py
+    scenarios/
+      stage2_partial.php
+      rate_limit_burst.php
+```
+
+### Инструменты и автотесты
+
+| Инструмент | Что проверяет | Роль |
+|------------|---------------|------|
+| `php artisan test` в store-api | полный набор сценариев | основной способ проверки |
+| `tools/scenarios/stage2_partial.php` | заказ из нескольких товаров, оплата, reconcile | живое демо |
+| `tools/scenarios/rate_limit_burst.php` | пачка заказов и delivery-progress | живое демо |
+| `tools/concurrency/race_test.py` | 50 параллельных webhook | гонки |
+| `tools/webhook/send_webhook.php` | ручная отправка payment webhook | хелпер |
+
+`supplier-stub` - один PHP-файл с логикой поставщика. `supplier-primary` и `supplier-fallback` - два Docker-контейнера на этом же stub (разные порты и env: duplicate, wrong, lie, 429).
+
+### Admin API
+
+| Метод | Путь |
+|-------|------|
+| GET | `/api/v1/admin/reconcile` |
+| POST | `/api/v1/admin/recover` |
+| GET | `/api/v1/admin/delivery-progress` |
+| GET | `/api/v1/admin/orders/{id}/as-of?at=` |
+| GET | `/api/v1/admin/finance/period?from=&to=` |
 
 Документация API: http://localhost:8080/api/documentation
-
-## Ключевые решения
-
-### Идемпотентность webhook
-
-`processed_webhook_events.event_id` UNIQUE. `insertOrIgnore` - повторный webhook с тем же event_id не меняет заказ и не запускает выдачу повторно. После commit транзакции webhook ставит `DeliverOrderJob` в очередь и сразу отвечает 200.
-
-### Exactly-once выдача
-
-- Atomic claim: `UPDATE orders SET status = delivering WHERE status IN (paid, out_of_stock, delivery_failed)`
-- Резерв ключа из `product_keys` с `lockForUpdate` - один ключ на один заказ
-- `delivery_attempts.request_id` UNIQUE
-- Параллельные webhook: только один поток проходит claim
-
-### Timeout и fallback
-
-- Primary: `request_id` вида `req_{order_id}-1`, retry с тем же id при timeout
-- Fallback: новый `request_id` `req_{order_id}-2`
-- Заглушка хранит ответ по request_id - повтор возвращает тот же code
-- HTTP timeout клиента 5 сек, stub sleep до 30 сек - timeout через ConnectionException, не как финальная ошибка
-
-### Webhook раньше заказа
-
-Неизвестный order_id пишется в `pending_webhooks`. При создании заказа pending события применяются.
-
-### Recovery
-
-- Зависший `delivering` сбрасывается в `paid`
-- Повторная выдача для `paid`, `out_of_stock`, `delivery_failed`
-- Artisan: `orders:recover-stuck`, HTTP: `POST /admin/recover`, schedule job каждые 5 минут
-
-### Каталог под нагрузкой
-
-Таблица `product_stock_cache(sku, available_count)` вместо COUNT на каждый запрос. Обновление при reserve, deliver, release и через `catalog:rebuild-stock`.
-
-Индексы PostgreSQL:
-
-- `product_stock_cache (available_count DESC) WHERE available_count > 0`
-- `product_keys (sku, id) WHERE status = available`
-
-Пример витринного запроса:
-
-```sql
-EXPLAIN (ANALYZE, BUFFERS)
-SELECT p.sku, p.name, p.type, p.price, p.currency, COALESCE(s.available_count, 0) AS stock
-FROM products p
-LEFT JOIN product_stock_cache s ON s.sku = p.sku
-WHERE p.is_active = true
-ORDER BY p.sku
-LIMIT 100 OFFSET 0;
-```
-
-После `catalog:seed-bulk` сравнить с naive `GROUP BY product_keys`.
-
-### Масштабирование
-
-Горизонтальное масштабирование API и queue workers за nginx, read replica для catalog/stock, outbox для интеграций. Worker: `docker compose --profile workers up -d`.
-
-Конфигурация: `.env.example` и `services/store-api/.env.example`.
-
-## Фактическое время
-
-42 часа (этапы 0-5, Docker, тесты, Swagger, README).

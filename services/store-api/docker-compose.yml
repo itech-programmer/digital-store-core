@@ -25,6 +25,7 @@ services:
       QUEUE_CONNECTION: redis
       SUPPLIER_PRIMARY_URL: http://supplier-primary:${SUPPLIER_PRIMARY_PORT}
       SUPPLIER_FALLBACK_URL: http://supplier-fallback:${SUPPLIER_FALLBACK_PORT}
+      SUPPLIER_CLIENT_RATE_LIMIT_PER_MINUTE: "${SUPPLIER_CLIENT_RATE_LIMIT_PER_MINUTE:-0}"
     networks:
       - store
 
@@ -45,7 +46,7 @@ services:
       context: .
       dockerfile: .docker/php/Dockerfile
     working_dir: /var/www/html
-    command: php artisan queue:work redis --queue=delivery,default --tries=3 --backoff=5,10,20 --sleep=1
+    command: php artisan queue:work redis --queue=delivery,default --tries=100 --backoff=5,10,20 --sleep=1
     volumes:
       - ./:/var/www/html
     depends_on:
@@ -63,6 +64,7 @@ services:
       QUEUE_CONNECTION: redis
       SUPPLIER_PRIMARY_URL: http://supplier-primary:${SUPPLIER_PRIMARY_PORT}
       SUPPLIER_FALLBACK_URL: http://supplier-fallback:${SUPPLIER_FALLBACK_PORT}
+      SUPPLIER_CLIENT_RATE_LIMIT_PER_MINUTE: "${SUPPLIER_CLIENT_RATE_LIMIT_PER_MINUTE:-0}"
     networks:
       - store
     profiles:

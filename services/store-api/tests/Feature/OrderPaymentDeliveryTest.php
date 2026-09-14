@@ -18,14 +18,7 @@ class OrderPaymentDeliveryTest extends TestCase
         parent::setUp();
 
         $this->seed(CatalogSeeder::class);
-
-        Http::fake([
-            '*/issue' => Http::response([
-                'status' => 'ok',
-                'request_id' => 'ignored',
-                'code' => 'SUPPLIER-CODE',
-            ], 200),
-        ]);
+        $this->fakeHonestSupplier();
     }
 
     public function test_create_pay_deliver_happy_path(): void
@@ -60,8 +53,12 @@ class OrderPaymentDeliveryTest extends TestCase
 
         $code = $show->json('data.issued_code');
         $this->assertNotEmpty($code);
-        $this->assertDatabaseHas('product_keys', [
+        $this->assertDatabaseHas('supplier_issuances', [
             'code' => $code,
+            'status' => 'issued',
+        ]);
+        $this->assertDatabaseHas('product_keys', [
+            'order_id' => \App\Models\Order\Order::query()->where('public_id', $orderId)->value('id'),
             'status' => 'delivered',
         ]);
     }
@@ -132,7 +129,7 @@ class OrderPaymentDeliveryTest extends TestCase
             ->assertNotFound();
     }
 
-    public function test_out_of_stock_is_recoverable_status(): void
+    public function test_out_of_stock_is_refunded_terminal_status(): void
     {
         ProductKey::query()->where('sku', 'SUB-SPOTIFY-1M')->delete();
 
@@ -149,7 +146,8 @@ class OrderPaymentDeliveryTest extends TestCase
 
         $this->getJson('/api/v1/orders/'.$orderId)
             ->assertOk()
-            ->assertJsonPath('data.status', 'out_of_stock')
-            ->assertJsonPath('data.issued_code', null);
+            ->assertJsonPath('data.status', 'refunded')
+            ->assertJsonPath('data.issued_code', null)
+            ->assertJsonPath('data.items.0.status', 'refunded');
     }
 }

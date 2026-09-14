@@ -19,7 +19,7 @@ class OrderController extends Controller
     #[OA\Post(
         path: '/api/v1/orders',
         operationId: 'createOrder',
-        description: 'Создает заказ по SKU. Если webhook пришел раньше заказа - pending события будут обработаны автоматически.',
+        description: 'Создаёт заказ: items[{sku,qty}] или legacy sku. Pending webhook до создания заказа применится автоматически.',
         summary: 'Создать заказ',
         requestBody: new OA\RequestBody(
             required: true,
@@ -58,7 +58,7 @@ class OrderController extends Controller
     #[OA\Get(
         path: '/api/v1/orders/{id}',
         operationId: 'getOrder',
-        description: 'Возвращает статус заказа и выданный код (если delivered).',
+        description: 'Возвращает заказ: header status, amount, items[] (status/issued_code/supplier per line).',
         summary: 'Получить заказ',
         tags: ['Orders'],
         parameters: [

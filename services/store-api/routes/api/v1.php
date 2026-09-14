@@ -1,5 +1,8 @@
 <?php
 
+use App\Http\Controllers\Api\V1\Admin\DeliveryProgressController;
+use App\Http\Controllers\Api\V1\Admin\FinancePeriodController;
+use App\Http\Controllers\Api\V1\Admin\OrderAsOfController;
 use App\Http\Controllers\Api\V1\Admin\ReconcileController;
 use App\Http\Controllers\Api\V1\Admin\RecoveryController;
 use App\Http\Controllers\Api\V1\Catalog\CatalogController;
@@ -19,4 +22,7 @@ Route::post('/webhook/payment', PaymentWebhookController::class);
 Route::middleware(AdminTokenMiddleware::class)->prefix('admin')->group(function () {
     Route::get('/reconcile', ReconcileController::class);
     Route::post('/recover', RecoveryController::class);
+    Route::get('/delivery-progress', DeliveryProgressController::class);
+    Route::get('/orders/{id}/as-of', OrderAsOfController::class);
+    Route::get('/finance/period', FinancePeriodController::class);
 });

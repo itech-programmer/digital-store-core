@@ -2,17 +2,23 @@
 
 namespace App\Services\Finance;
 
+use App\Contracts\Payment\FinancialLedgerRepositoryInterface;
 use App\Contracts\Payment\LedgerWriterInterface;
 use App\Models\Order\Order;
-use App\Models\Payment\FinancialLedgerEntry;
+use App\Models\Order\OrderItem;
 use Illuminate\Support\Facades\Log;
 
 class LedgerWriter implements LedgerWriterInterface
 {
+    public function __construct(
+        private readonly FinancialLedgerRepositoryInterface $ledger,
+    ) {}
+
     public function recordPaymentReceived(Order $order, string $eventId): void
     {
         $this->insertIgnore(
             orderId: $order->id,
+            orderItemId: null,
             eventType: 'payment_received',
             amount: (float) $order->amount,
             currency: $order->currency,
@@ -20,26 +26,41 @@ class LedgerWriter implements LedgerWriterInterface
         );
     }
 
-    public function recordDeliveryCompleted(Order $order): void
+    public function recordDeliveryCompleted(Order $order, OrderItem $item): void
     {
         $this->insertIgnore(
             orderId: $order->id,
+            orderItemId: $item->id,
             eventType: 'delivery_completed',
-            amount: (float) $order->amount,
-            currency: $order->currency,
-            referenceId: 'del_'.$order->public_id,
+            amount: $item->lineAmount(),
+            currency: $item->currency,
+            referenceId: 'del_'.$item->id,
+        );
+    }
+
+    public function recordRefundIssued(Order $order, OrderItem $item): void
+    {
+        $this->insertIgnore(
+            orderId: $order->id,
+            orderItemId: $item->id,
+            eventType: 'refund_issued',
+            amount: $item->lineAmount(),
+            currency: $item->currency,
+            referenceId: 'ref_'.$item->id,
         );
     }
 
     private function insertIgnore(
         string $orderId,
+        ?string $orderItemId,
         string $eventType,
         float $amount,
         string $currency,
         string $referenceId,
     ): void {
-        $inserted = FinancialLedgerEntry::query()->insertOrIgnore([
+        $inserted = $this->ledger->insertOrIgnore([
             'order_id' => $orderId,
+            'order_item_id' => $orderItemId,
             'event_type' => $eventType,
             'amount' => $amount,
             'currency' => $currency,
@@ -52,6 +73,7 @@ class LedgerWriter implements LedgerWriterInterface
                 'event_type' => $eventType,
                 'reference_id' => $referenceId,
                 'order_id' => $orderId,
+                'order_item_id' => $orderItemId,
             ]);
         }
     }

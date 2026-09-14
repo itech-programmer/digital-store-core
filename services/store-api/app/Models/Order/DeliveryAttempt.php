@@ -11,6 +11,7 @@ class DeliveryAttempt extends Model
 
     protected $fillable = [
         'order_id',
+        'order_item_id',
         'request_id',
         'supplier',
         'attempt_number',

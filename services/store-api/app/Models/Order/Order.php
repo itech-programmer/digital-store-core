@@ -45,6 +45,11 @@ class Order extends Model
         return $this->belongsTo(Product::class, 'sku', 'sku');
     }
 
+    public function items(): HasMany
+    {
+        return $this->hasMany(OrderItem::class)->orderBy('position');
+    }
+
     public function deliveryAttempts(): HasMany
     {
         return $this->hasMany(DeliveryAttempt::class);

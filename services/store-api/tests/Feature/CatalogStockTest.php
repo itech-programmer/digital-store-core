@@ -18,14 +18,7 @@ class CatalogStockTest extends TestCase
         parent::setUp();
 
         $this->seed(CatalogSeeder::class);
-
-        Http::fake([
-            '*/issue' => Http::response([
-                'status' => 'ok',
-                'request_id' => 'ignored',
-                'code' => 'SUPPLIER-CODE',
-            ], 200),
-        ]);
+        $this->fakeHonestSupplier();
     }
 
     public function test_storefront_returns_paginated_stock(): void

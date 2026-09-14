@@ -4,8 +4,8 @@ namespace App\Http\Controllers\Api\V1\Catalog;
 
 use App\Contracts\Catalog\StockCacheServiceInterface;
 use App\Http\Controllers\Controller;
+use App\Http\Requests\Catalog\CatalogStockRequest;
 use Illuminate\Http\JsonResponse;
-use Illuminate\Http\Request;
 use OpenApi\Attributes as OA;
 
 class CatalogController extends Controller
@@ -17,7 +17,7 @@ class CatalogController extends Controller
     #[OA\Get(
         path: '/api/v1/catalog/stock',
         operationId: 'catalogStock',
-        description: 'Пагинированный список активных SKU с остатком из product_stock_cache (без COUNT по product_keys на каждый запрос).',
+        description: 'Пагинированный список активных SKU с остатком из product_stock_cache.',
         summary: 'Витрина: SKU и остатки',
         tags: ['Catalog'],
         parameters: [
@@ -40,14 +40,12 @@ class CatalogController extends Controller
                 description: 'Список SKU',
                 content: new OA\JsonContent(ref: '#/components/schemas/CatalogStockResponse'),
             ),
+            new OA\Response(response: 422, description: 'Ошибка валидации'),
         ],
     )]
-    public function stock(Request $request): JsonResponse
+    public function stock(CatalogStockRequest $request): JsonResponse
     {
-        $page = (int) $request->integer('page', 1);
-        $perPage = (int) $request->integer('per_page', 100);
-
-        $paginator = $this->stockCache->storefront($page, $perPage);
+        $paginator = $this->stockCache->storefront($request->page(), $request->perPage());
 
         return response()->json([
             'data' => $paginator->items(),

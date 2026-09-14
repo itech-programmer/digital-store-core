@@ -47,6 +47,11 @@ class SupplierTimeoutFallbackTest extends TestCase
 
                 return SupplierIssueResultDto::ok('IGNORED-SUPPLIER-CODE');
             }
+
+            public function findIssuedCode(string $requestId): ?string
+            {
+                return null;
+            }
         };
 
         $fallback = new class implements SupplierClientInterface {
@@ -59,14 +64,17 @@ class SupplierTimeoutFallbackTest extends TestCase
             {
                 return SupplierIssueResultDto::error('should_not_run');
             }
+
+            public function findIssuedCode(string $requestId): ?string
+            {
+                return null;
+            }
         };
 
-        $this->app->instance(
-            SupplierChain::class,
-            new SupplierChain($primary, $fallback, maxRetries: 3, backoffMs: [0, 0, 0])
+        $this->bindSupplierChain(new SupplierChain($primary, $fallback, maxRetries: 3, backoffMs: [0, 0, 0])
         );
 
-        $orderId = $this->postJson('/api/v1/orders', ['sku' => 'KEY-CS2-PRIME'])->json('data.id');
+        $orderId = $this->postJson('/api/v1/orders', ['sku' => 'KEY-GTA5'])->json('data.id');
         $amount = $this->getJson('/api/v1/orders/'.$orderId)->json('data.amount');
 
         $this->postJson('/api/v1/webhook/payment', [
@@ -82,7 +90,12 @@ class SupplierTimeoutFallbackTest extends TestCase
             ->assertOk()
             ->assertJsonPath('data.status', 'delivered');
 
-        $this->assertSame(['req_'.$orderId.'-1', 'req_'.$orderId.'-1'], $seenRequestIds);
+        $this->assertCount(2, $seenRequestIds);
+        $this->assertSame($seenRequestIds[0], $seenRequestIds[1]);
+        $this->assertMatchesRegularExpression(
+            '/^req_'.preg_quote($orderId, '/').'_[a-f0-9]+-1$/',
+            $seenRequestIds[0]
+        );
         $this->assertSame(
             1,
             DeliveryAttempt::query()->where('order_id', Order::where('public_id', $orderId)->value('id'))
@@ -103,6 +116,11 @@ class SupplierTimeoutFallbackTest extends TestCase
             {
                 return SupplierIssueResultDto::error('supplier_unavailable');
             }
+
+            public function findIssuedCode(string $requestId): ?string
+            {
+                return null;
+            }
         };
 
         $fallback = new class implements SupplierClientInterface {
@@ -115,11 +133,14 @@ class SupplierTimeoutFallbackTest extends TestCase
             {
                 return SupplierIssueResultDto::ok('FROM-FALLBACK');
             }
+
+            public function findIssuedCode(string $requestId): ?string
+            {
+                return null;
+            }
         };
 
-        $this->app->instance(
-            SupplierChain::class,
-            new SupplierChain($primary, $fallback, maxRetries: 2, backoffMs: [0])
+        $this->bindSupplierChain(new SupplierChain($primary, $fallback, maxRetries: 2, backoffMs: [0])
         );
 
         $orderId = $this->postJson('/api/v1/orders', ['sku' => 'KEY-GTA5'])->json('data.id');
@@ -140,12 +161,17 @@ class SupplierTimeoutFallbackTest extends TestCase
 
         $internalId = Order::query()->where('public_id', $orderId)->value('id');
 
-        $this->assertDatabaseHas('delivery_attempts', [
-            'order_id' => $internalId,
-            'request_id' => 'req_'.$orderId.'-2',
-            'supplier' => 'fallback',
-            'status' => 'success',
-        ]);
+        $success = DeliveryAttempt::query()
+            ->where('order_id', $internalId)
+            ->where('status', 'success')
+            ->first();
+
+        $this->assertNotNull($success);
+        $this->assertSame('fallback', $success->supplier);
+        $this->assertMatchesRegularExpression(
+            '/^req_'.preg_quote($orderId, '/').'_[a-f0-9]+-2$/',
+            $success->request_id
+        );
 
         $this->assertSame(
             1,

@@ -14,6 +14,7 @@ class ProductKey extends Model
         'code',
         'status',
         'order_id',
+        'order_item_id',
         'reserved_at',
         'delivered_at',
     ];

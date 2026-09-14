@@ -4,8 +4,8 @@ namespace App\Http\Controllers\Api\V1\Admin;
 
 use App\Contracts\Order\RecoveryServiceInterface;
 use App\Http\Controllers\Controller;
+use App\Http\Requests\Admin\RecoverStuckRequest;
 use Illuminate\Http\JsonResponse;
-use Illuminate\Http\Request;
 use OpenApi\Attributes as OA;
 
 class RecoveryController extends Controller
@@ -17,7 +17,7 @@ class RecoveryController extends Controller
     #[OA\Post(
         path: '/api/v1/admin/recover',
         operationId: 'adminRecover',
-        description: 'Сбрасывает stale delivering и повторяет выдачу для paid/out_of_stock/delivery_failed.',
+        description: 'Line-aware recovery: сбрасывает stale delivering и дожимает выдачу/refund.',
         summary: 'Recovery зависших заказов',
         security: [['AdminToken' => []]],
         tags: ['Admin'],
@@ -41,12 +41,11 @@ class RecoveryController extends Controller
                 description: 'Неверный или отсутствующий X-Admin-Token',
                 content: new OA\JsonContent(ref: '#/components/schemas/ErrorMessage'),
             ),
+            new OA\Response(response: 422, description: 'Ошибка валидации'),
         ],
     )]
-    public function __invoke(Request $request): JsonResponse
+    public function __invoke(RecoverStuckRequest $request): JsonResponse
     {
-        $stale = (int) $request->integer('stale_minutes', 10);
-
-        return response()->json($this->recovery->recoverStuck(max(1, $stale)));
+        return response()->json($this->recovery->recoverStuck($request->staleMinutes()));
     }
 }

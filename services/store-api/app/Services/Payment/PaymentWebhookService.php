@@ -2,15 +2,15 @@
 
 namespace App\Services\Payment;
 
+use App\Contracts\Event\DomainEventRecorderInterface;
 use App\Contracts\Order\OrderRepositoryInterface;
 use App\Contracts\Payment\LedgerWriterInterface;
+use App\Contracts\Payment\PaymentWebhookRepositoryInterface;
 use App\Contracts\Payment\PaymentWebhookServiceInterface;
 use App\DTO\Payment\PaymentWebhookDto;
 use App\Enums\OrderStatus;
 use App\Enums\PaymentWebhookStatus;
 use App\Jobs\DeliverOrderJob;
-use App\Models\Payment\PendingWebhook;
-use App\Models\Payment\ProcessedWebhookEvent;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
 
@@ -18,7 +18,9 @@ class PaymentWebhookService implements PaymentWebhookServiceInterface
 {
     public function __construct(
         private readonly OrderRepositoryInterface $orders,
+        private readonly PaymentWebhookRepositoryInterface $webhooks,
         private readonly LedgerWriterInterface $ledger,
+        private readonly DomainEventRecorderInterface $events,
     ) {}
 
     public function process(PaymentWebhookDto $dto): void
@@ -34,7 +36,7 @@ class PaymentWebhookService implements PaymentWebhookServiceInterface
                 return;
             }
 
-            $inserted = ProcessedWebhookEvent::query()->insertOrIgnore([
+            $inserted = $this->webhooks->insertProcessedOrIgnore([
                 'event_id' => $dto->eventId,
                 'order_id' => $order->id,
                 'status' => $dto->status->value,
@@ -73,6 +75,9 @@ class PaymentWebhookService implements PaymentWebhookServiceInterface
             if ($dto->status === PaymentWebhookStatus::Failed) {
                 $order->transitionTo(OrderStatus::PaymentFailed);
                 $this->orders->save($order);
+                $this->events->record('order', $order->id, 'order.status_changed', [
+                    'status' => OrderStatus::PaymentFailed->value,
+                ]);
 
                 return;
             }
@@ -82,6 +87,9 @@ class PaymentWebhookService implements PaymentWebhookServiceInterface
             $this->orders->save($order);
 
             $this->ledger->recordPaymentReceived($order, $dto->eventId);
+            $this->events->record('order', $order->id, 'order.status_changed', [
+                'status' => OrderStatus::Paid->value,
+            ]);
 
             Log::info('payment.webhook.paid', [
                 'event_id' => $dto->eventId,
@@ -98,24 +106,21 @@ class PaymentWebhookService implements PaymentWebhookServiceInterface
 
     private function storePending(PaymentWebhookDto $dto): void
     {
-        PendingWebhook::query()->updateOrCreate(
-            ['event_id' => $dto->eventId],
-            [
-                'order_public_id' => $dto->orderId,
+        $this->webhooks->updateOrCreatePending($dto->eventId, [
+            'order_public_id' => $dto->orderId,
+            'status' => $dto->status->value,
+            'amount' => $dto->amount,
+            'currency' => $dto->currency,
+            'payload' => [
+                'event_id' => $dto->eventId,
+                'order_id' => $dto->orderId,
                 'status' => $dto->status->value,
                 'amount' => $dto->amount,
                 'currency' => $dto->currency,
-                'payload' => [
-                    'event_id' => $dto->eventId,
-                    'order_id' => $dto->orderId,
-                    'status' => $dto->status->value,
-                    'amount' => $dto->amount,
-                    'currency' => $dto->currency,
-                    'created_at' => $dto->createdAt->format('Y-m-d\TH:i:s\Z'),
-                ],
-                'received_at' => now(),
-            ]
-        );
+                'created_at' => $dto->createdAt->format('Y-m-d\TH:i:s\Z'),
+            ],
+            'received_at' => now(),
+        ]);
 
         Log::info('payment.webhook.pending', [
             'event_id' => $dto->eventId,

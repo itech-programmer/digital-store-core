@@ -16,7 +16,7 @@ class ReconcileController extends Controller
     #[OA\Get(
         path: '/api/v1/admin/reconcile',
         operationId: 'adminReconcile',
-        description: 'Находит расхождения: оплаченные но не выданные, выданные без оплаты. Проверяет баланс financial_ledger.',
+        description: 'Находит расхождения статусов и проверяет инвариант paid = delivered + refunded в financial_ledger.',
         summary: 'Сверка ledger',
         security: [['AdminToken' => []]],
         tags: ['Admin'],

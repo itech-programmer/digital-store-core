@@ -2,30 +2,28 @@
 
 namespace App\Services\Catalog;
 
+use App\Contracts\Catalog\ProductKeyRepositoryInterface;
+use App\Contracts\Catalog\ProductRepositoryInterface;
+use App\Contracts\Catalog\ProductStockCacheRepositoryInterface;
 use App\Contracts\Catalog\StockCacheServiceInterface;
-use App\Enums\ProductKeyStatus;
-use App\Models\Catalog\Product;
-use App\Models\Catalog\ProductKey;
-use App\Models\Catalog\ProductStockCache;
 use Illuminate\Contracts\Pagination\LengthAwarePaginator;
-use Illuminate\Support\Facades\DB;
 
 class StockCacheService implements StockCacheServiceInterface
 {
+    public function __construct(
+        private readonly ProductRepositoryInterface $products,
+        private readonly ProductKeyRepositoryInterface $productKeys,
+        private readonly ProductStockCacheRepositoryInterface $stockCache,
+    ) {}
+
     public function rebuildAll(): int
     {
-        $counts = ProductKey::query()
-            ->select([
-                'sku',
-                DB::raw("SUM(CASE WHEN status = 'available' THEN 1 ELSE 0 END) as available_count"),
-            ])
-            ->groupBy('sku')
-            ->pluck('available_count', 'sku');
+        $counts = $this->productKeys->availableCountsBySku();
 
         $now = now();
         $payload = [];
 
-        foreach (Product::query()->pluck('sku') as $sku) {
+        foreach ($this->products->pluckAllSkus() as $sku) {
             $payload[] = [
                 'sku' => $sku,
                 'available_count' => (int) ($counts[$sku] ?? 0),
@@ -34,7 +32,7 @@ class StockCacheService implements StockCacheServiceInterface
         }
 
         foreach (array_chunk($payload, 500) as $chunk) {
-            ProductStockCache::query()->upsert($chunk, ['sku'], ['available_count', 'updated_at']);
+            $this->stockCache->upsert($chunk);
         }
 
         return count($payload);
@@ -42,34 +40,19 @@ class StockCacheService implements StockCacheServiceInterface
 
     public function refreshSku(string $sku): void
     {
-        $count = ProductKey::query()
-            ->where('sku', $sku)
-            ->where('status', ProductKeyStatus::Available)
-            ->count();
+        $count = $this->productKeys->countAvailableBySku($sku);
 
-        ProductStockCache::query()->upsert([
+        $this->stockCache->upsert([
             [
                 'sku' => $sku,
                 'available_count' => $count,
                 'updated_at' => now(),
             ],
-        ], ['sku'], ['available_count', 'updated_at']);
+        ]);
     }
 
     public function storefront(int $page = 1, int $perPage = 100): LengthAwarePaginator
     {
-        return Product::query()
-            ->leftJoin('product_stock_cache as s', 's.sku', '=', 'products.sku')
-            ->where('products.is_active', true)
-            ->orderBy('products.sku')
-            ->select([
-                'products.sku',
-                'products.name',
-                'products.type',
-                'products.price',
-                'products.currency',
-                DB::raw('COALESCE(s.available_count, 0) as stock'),
-            ])
-            ->paginate(perPage: min(max($perPage, 1), 200), page: max($page, 1));
+        return $this->products->storefrontPaginate($page, $perPage);
     }
 }

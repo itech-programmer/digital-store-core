@@ -2,12 +2,13 @@
 
 namespace App\Services\Supplier;
 
+use App\Contracts\Supplier\SupplierChainInterface;
 use App\Contracts\Supplier\SupplierClientInterface;
 use App\DTO\Supplier\SupplierIssueRequestDto;
 use App\DTO\Supplier\SupplierIssueResultDto;
 use Illuminate\Support\Facades\Log;
 
-class SupplierChain
+class SupplierChain implements SupplierChainInterface
 {
     public function __construct(
         private readonly SupplierClientInterface $primary,
@@ -18,40 +19,138 @@ class SupplierChain
 
     public function issueWithFallback(string $orderPublicId, string $sku): array
     {
-        $primaryRequestId = sprintf('req_%s-1', $orderPublicId);
+        return $this->issueForPreferred(
+            orderPublicId: $orderPublicId,
+            sku: $sku,
+            requestPrefix: sprintf('req_%s', $orderPublicId),
+            preferredSupplier: 'primary',
+        );
+    }
 
-        $primaryResult = $this->issueWithRetries(
-            client: $this->primary,
-            request: new SupplierIssueRequestDto($primaryRequestId, $sku, $orderPublicId),
+    public function issueForItem(
+        string $orderPublicId,
+        string $sku,
+        string $orderItemId,
+        string $preferredSupplier,
+    ): array {
+        $itemToken = str_replace('-', '', $orderItemId);
+
+        return $this->issueForPreferred(
+            orderPublicId: $orderPublicId,
+            sku: $sku,
+            requestPrefix: sprintf('req_%s_%s', $orderPublicId, $itemToken),
+            preferredSupplier: $preferredSupplier === 'fallback' ? 'fallback' : 'primary',
+        );
+    }
+
+    public function lookupIssuedCode(string $supplierName, string $requestId): ?string
+    {
+        $client = $supplierName === 'fallback' ? $this->fallback : $this->primary;
+
+        return $client->findIssuedCode($requestId);
+    }
+
+    private function issueForPreferred(
+        string $orderPublicId,
+        string $sku,
+        string $requestPrefix,
+        string $preferredSupplier,
+    ): array {
+        $preferred = $preferredSupplier === 'fallback' ? $this->fallback : $this->primary;
+        $other = $preferredSupplier === 'fallback' ? $this->primary : $this->fallback;
+
+        $preferredRequestId = $requestPrefix.'-1';
+
+        $preferredResult = $this->issueWithRetries(
+            client: $preferred,
+            request: new SupplierIssueRequestDto($preferredRequestId, $sku, $orderPublicId),
         );
 
-        if ($primaryResult->success) {
+        if ($preferredResult->success) {
             return [
-                'result' => $primaryResult,
-                'supplier' => $this->primary->name(),
-                'request_id' => $primaryRequestId,
+                'result' => $preferredResult,
+                'supplier' => $preferred->name(),
+                'request_id' => $preferredRequestId,
             ];
         }
 
-        $fallbackRequestId = sprintf('req_%s-2', $orderPublicId);
+        $recovered = $preferred->findIssuedCode($preferredRequestId);
+        if (is_string($recovered) && $recovered !== '') {
+            Log::info('supplier.lie_recovered', [
+                'order_id' => $orderPublicId,
+                'supplier' => $preferred->name(),
+                'request_id' => $preferredRequestId,
+            ]);
+
+            return [
+                'result' => SupplierIssueResultDto::ok($recovered),
+                'supplier' => $preferred->name(),
+                'request_id' => $preferredRequestId,
+            ];
+        }
+
+        $shouldFailover = $preferredResult->timedOut
+            || $preferredResult->rateLimited
+            || in_array($preferredResult->reason, ['supplier_unavailable', 'out_of_stock', 'timeout'], true);
+
+        if (! $shouldFailover) {
+            return [
+                'result' => $preferredResult,
+                'supplier' => $preferred->name(),
+                'request_id' => $preferredRequestId,
+            ];
+        }
+
+        $otherRequestId = $requestPrefix.'-2';
 
         Log::info('supplier.fallback', [
             'order_id' => $orderPublicId,
-            'from' => $this->primary->name(),
-            'to' => $this->fallback->name(),
-            'primary_reason' => $primaryResult->reason,
-            'primary_timed_out' => $primaryResult->timedOut,
+            'from' => $preferred->name(),
+            'to' => $other->name(),
+            'primary_reason' => $preferredResult->reason,
+            'primary_timed_out' => $preferredResult->timedOut,
         ]);
 
-        $fallbackResult = $this->issueWithRetries(
-            client: $this->fallback,
-            request: new SupplierIssueRequestDto($fallbackRequestId, $sku, $orderPublicId),
+        $otherResult = $this->issueWithRetries(
+            client: $other,
+            request: new SupplierIssueRequestDto($otherRequestId, $sku, $orderPublicId),
         );
 
+        if ($otherResult->success) {
+            return [
+                'result' => $otherResult,
+                'supplier' => $other->name(),
+                'request_id' => $otherRequestId,
+            ];
+        }
+
+        $recoveredOther = $other->findIssuedCode($otherRequestId);
+        if (is_string($recoveredOther) && $recoveredOther !== '') {
+            return [
+                'result' => SupplierIssueResultDto::ok($recoveredOther),
+                'supplier' => $other->name(),
+                'request_id' => $otherRequestId,
+            ];
+        }
+
+        if ($preferredResult->rateLimited || $otherResult->rateLimited) {
+            $retryAfter = max(
+                $preferredResult->retryAfterSeconds ?? 0,
+                $otherResult->retryAfterSeconds ?? 0,
+                1
+            );
+
+            return [
+                'result' => SupplierIssueResultDto::rateLimited($retryAfter),
+                'supplier' => $otherResult->rateLimited ? $other->name() : $preferred->name(),
+                'request_id' => $otherResult->rateLimited ? $otherRequestId : $preferredRequestId,
+            ];
+        }
+
         return [
-            'result' => $fallbackResult,
-            'supplier' => $this->fallback->name(),
-            'request_id' => $fallbackRequestId,
+            'result' => $otherResult,
+            'supplier' => $other->name(),
+            'request_id' => $otherRequestId,
         ];
     }
 
@@ -85,7 +184,7 @@ class SupplierChain
                 return $last;
             }
 
-            if (! $last->timedOut) {
+            if ($last->rateLimited || ! $last->timedOut) {
                 return $last;
             }
         }

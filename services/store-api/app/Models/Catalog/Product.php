@@ -15,6 +15,7 @@ class Product extends Model
         'currency',
         'image_path',
         'is_active',
+        'preferred_supplier',
     ];
 
     protected function casts(): array

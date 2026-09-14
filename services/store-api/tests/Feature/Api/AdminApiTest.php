@@ -16,14 +16,7 @@ class AdminApiTest extends TestCase
         parent::setUp();
 
         $this->seed(CatalogSeeder::class);
-
-        Http::fake([
-            '*/issue' => Http::response([
-                'status' => 'ok',
-                'request_id' => 'ignored',
-                'code' => 'SUPPLIER-CODE',
-            ], 200),
-        ]);
+        $this->fakeHonestSupplier();
     }
 
     public function test_reconcile_rejects_missing_token(): void
@@ -71,9 +64,11 @@ class AdminApiTest extends TestCase
             ->assertJsonStructure([
                 'paid_not_delivered',
                 'delivered_not_paid',
+                'unbalanced_orders',
                 'ledger_balanced',
                 'ledger_payment_sum',
                 'ledger_delivery_sum',
+                'ledger_refund_sum',
                 'generated_at',
             ])
             ->assertJsonPath('paid_not_delivered', [])

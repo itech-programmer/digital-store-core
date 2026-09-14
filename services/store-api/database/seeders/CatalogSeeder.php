@@ -13,21 +13,21 @@ class CatalogSeeder extends Seeder
     public function run(): void
     {
         $products = [
-            ['sku' => 'STEAM-TOPUP-500', 'name' => 'Пополнение Steam 500 ₽', 'type' => 'topup', 'price' => 500, 'image_path' => 'assets/steam.png'],
-            ['sku' => 'STEAM-TOPUP-1000', 'name' => 'Пополнение Steam 1000 ₽', 'type' => 'topup', 'price' => 1000, 'image_path' => 'assets/steam.png'],
-            ['sku' => 'STEAM-TOPUP-2500', 'name' => 'Пополнение Steam 2500 ₽', 'type' => 'topup', 'price' => 2500, 'image_path' => 'assets/steam.png'],
+            ['sku' => 'STEAM-TOPUP-500', 'name' => 'Пополнение Steam 500 RUB', 'type' => 'topup', 'price' => 500, 'image_path' => 'assets/steam.png'],
+            ['sku' => 'STEAM-TOPUP-1000', 'name' => 'Пополнение Steam 1000 RUB', 'type' => 'topup', 'price' => 1000, 'image_path' => 'assets/steam.png'],
+            ['sku' => 'STEAM-TOPUP-2500', 'name' => 'Пополнение Steam 2500 RUB', 'type' => 'topup', 'price' => 2500, 'image_path' => 'assets/steam.png'],
             ['sku' => 'KEY-CS2-PRIME', 'name' => 'CS2 Prime Status ключ', 'type' => 'key', 'price' => 1290, 'image_path' => 'assets/cs2.png'],
             ['sku' => 'KEY-GTA5', 'name' => 'GTA V ключ активации', 'type' => 'key', 'price' => 1990, 'image_path' => 'assets/gta5.png'],
             ['sku' => 'KEY-EFT', 'name' => 'Escape from Tarkov ключ', 'type' => 'key', 'price' => 3490, 'image_path' => 'assets/eft.png'],
             ['sku' => 'SUB-DISCORD-1M', 'name' => 'Discord Nitro 1 месяц', 'type' => 'subscription', 'price' => 399, 'image_path' => 'assets/discord.png'],
             ['sku' => 'SUB-YT-3M', 'name' => 'YouTube Premium 3 месяца', 'type' => 'subscription', 'price' => 1490, 'image_path' => 'assets/youtube.png'],
             ['sku' => 'SUB-SPOTIFY-1M', 'name' => 'Spotify Premium 1 месяц', 'type' => 'subscription', 'price' => 299, 'image_path' => 'assets/spotify.png'],
-            ['sku' => 'GIFT-PSN-1000', 'name' => 'PlayStation Store карта 1000 ₽', 'type' => 'giftcard', 'price' => 1000, 'image_path' => 'assets/psn.png'],
-            ['sku' => 'GIFT-XBOX-1500', 'name' => 'Xbox Gift Card 1500 ₽', 'type' => 'giftcard', 'price' => 1500, 'image_path' => 'assets/xbox.png'],
+            ['sku' => 'GIFT-PSN-1000', 'name' => 'PlayStation Store карта 1000 RUB', 'type' => 'giftcard', 'price' => 1000, 'image_path' => 'assets/psn.png'],
+            ['sku' => 'GIFT-XBOX-1500', 'name' => 'Xbox Gift Card 1500 RUB', 'type' => 'giftcard', 'price' => 1500, 'image_path' => 'assets/xbox.png'],
             ['sku' => 'GIFT-ROBLOX-800', 'name' => 'Roblox 800 Robux', 'type' => 'giftcard', 'price' => 890, 'image_path' => 'assets/roblox.png'],
         ];
 
-        foreach ($products as $product) {
+        foreach ($products as $index => $product) {
             Product::query()->updateOrCreate(
                 ['sku' => $product['sku']],
                 [
@@ -37,6 +37,7 @@ class CatalogSeeder extends Seeder
                     'currency' => 'RUB',
                     'image_path' => $product['image_path'],
                     'is_active' => true,
+                    'preferred_supplier' => $index % 2 === 0 ? 'primary' : 'fallback',
                 ]
             );
         }

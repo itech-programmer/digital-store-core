@@ -2,7 +2,8 @@
     "openapi": "3.0.0",
     "info": {
         "title": "Digital Store Core API",
-        "version": "1.0.0"
+        "description": "Этапы 1-2: multi-item orders, partial/refund, untrusted supplier, admin reconcile/recover, rate-limit progress, point-in-time.",
+        "version": "2.0.0"
     },
     "servers": [
         {
@@ -11,13 +12,179 @@
         }
     ],
     "paths": {
+        "/api/v1/admin/delivery-progress": {
+            "get": {
+                "tags": [
+                    "Admin"
+                ],
+                "summary": "Прогресс выдачи",
+                "description": "Глубина очереди delivery и счётчики выдачи (задача 3).",
+                "operationId": "adminDeliveryProgress",
+                "responses": {
+                    "200": {
+                        "description": "Снимок прогресса",
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/DeliveryProgressResponse"
+                                }
+                            }
+                        }
+                    },
+                    "401": {
+                        "description": "Неверный или отсутствующий X-Admin-Token",
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/ErrorMessage"
+                                }
+                            }
+                        }
+                    }
+                },
+                "security": [
+                    {
+                        "AdminToken": []
+                    }
+                ]
+            }
+        },
+        "/api/v1/admin/finance/period": {
+            "get": {
+                "tags": [
+                    "Admin"
+                ],
+                "summary": "Finance period totals",
+                "description": "Итоги financial_ledger за период (задача 4).",
+                "operationId": "adminFinancePeriod",
+                "parameters": [
+                    {
+                        "name": "from",
+                        "in": "query",
+                        "required": true,
+                        "schema": {
+                            "type": "string",
+                            "format": "date-time"
+                        }
+                    },
+                    {
+                        "name": "to",
+                        "in": "query",
+                        "required": true,
+                        "schema": {
+                            "type": "string",
+                            "format": "date-time"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "Итоги периода",
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/FinancePeriodResponse"
+                                }
+                            }
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/ErrorMessage"
+                                }
+                            }
+                        }
+                    },
+                    "422": {
+                        "description": "Ошибка валидации"
+                    }
+                },
+                "security": [
+                    {
+                        "AdminToken": []
+                    }
+                ]
+            }
+        },
+        "/api/v1/admin/orders/{id}/as-of": {
+            "get": {
+                "tags": [
+                    "Admin"
+                ],
+                "summary": "Order as-of",
+                "description": "Восстанавливает состояние заказа на момент времени из domain_events + ledger (задача 4).",
+                "operationId": "adminOrderAsOf",
+                "parameters": [
+                    {
+                        "name": "id",
+                        "in": "path",
+                        "required": true,
+                        "schema": {
+                            "type": "string"
+                        }
+                    },
+                    {
+                        "name": "at",
+                        "in": "query",
+                        "required": true,
+                        "schema": {
+                            "type": "string",
+                            "format": "date-time"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "Снимок на момент",
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/OrderAsOfResponse"
+                                }
+                            }
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/ErrorMessage"
+                                }
+                            }
+                        }
+                    },
+                    "404": {
+                        "description": "Not found",
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/ErrorMessage"
+                                }
+                            }
+                        }
+                    },
+                    "422": {
+                        "description": "Ошибка валидации"
+                    }
+                },
+                "security": [
+                    {
+                        "AdminToken": []
+                    }
+                ]
+            }
+        },
         "/api/v1/admin/reconcile": {
             "get": {
                 "tags": [
                     "Admin"
                 ],
                 "summary": "Сверка ledger",
-                "description": "Находит расхождения: оплаченные но не выданные, выданные без оплаты. Проверяет баланс financial_ledger.",
+                "description": "Находит расхождения статусов и проверяет инвариант paid = delivered + refunded в financial_ledger.",
                 "operationId": "adminReconcile",
                 "responses": {
                     "200": {
@@ -54,7 +221,7 @@
                     "Admin"
                 ],
                 "summary": "Recovery зависших заказов",
-                "description": "Сбрасывает stale delivering и повторяет выдачу для paid/out_of_stock/delivery_failed.",
+                "description": "Line-aware recovery: сбрасывает stale delivering и дожимает выдачу/refund.",
                 "operationId": "adminRecover",
                 "parameters": [
                     {
@@ -90,6 +257,9 @@
                                 }
                             }
                         }
+                    },
+                    "422": {
+                        "description": "Ошибка валидации"
                     }
                 },
                 "security": [
@@ -105,7 +275,7 @@
                     "Catalog"
                 ],
                 "summary": "Витрина: SKU и остатки",
-                "description": "Пагинированный список активных SKU с остатком из product_stock_cache (без COUNT по product_keys на каждый запрос).",
+                "description": "Пагинированный список активных SKU с остатком из product_stock_cache.",
                 "operationId": "catalogStock",
                 "parameters": [
                     {
@@ -142,6 +312,9 @@
                                 }
                             }
                         }
+                    },
+                    "422": {
+                        "description": "Ошибка валидации"
                     }
                 }
             }
@@ -184,7 +357,7 @@
                     "Orders"
                 ],
                 "summary": "Создать заказ",
-                "description": "Создает заказ по SKU. Если webhook пришел раньше заказа - pending события будут обработаны автоматически.",
+                "description": "Создаёт заказ: items[{sku,qty}] или legacy sku. Pending webhook до создания заказа применится автоматически.",
                 "operationId": "createOrder",
                 "requestBody": {
                     "required": true,
@@ -229,7 +402,7 @@
                     "Orders"
                 ],
                 "summary": "Получить заказ",
-                "description": "Возвращает статус заказа и выданный код (если delivered).",
+                "description": "Возвращает заказ: header status, amount, items[] (status/issued_code/supplier per line).",
                 "operationId": "getOrder",
                 "parameters": [
                     {
@@ -322,18 +495,89 @@
     "components": {
         "schemas": {
             "CreateOrderRequest": {
-                "required": [
-                    "sku"
-                ],
                 "properties": {
                     "sku": {
-                        "description": "SKU товара",
+                        "description": "SKU одного товара (legacy). Либо sku, либо items.",
                         "type": "string",
                         "example": "KEY-CS2-PRIME"
+                    },
+                    "items": {
+                        "description": "Позиции заказа (задача 1 этапа 2: несколько товаров)",
+                        "type": "array",
+                        "items": {
+                            "required": [
+                                "sku"
+                            ],
+                            "properties": {
+                                "sku": {
+                                    "type": "string",
+                                    "example": "KEY-CS2-PRIME"
+                                },
+                                "qty": {
+                                    "type": "integer",
+                                    "example": 1
+                                }
+                            },
+                            "type": "object"
+                        }
                     },
                     "public_id": {
                         "type": "string",
                         "example": "ord_abc123xyz0",
+                        "nullable": true
+                    }
+                },
+                "type": "object"
+            },
+            "OrderItem": {
+                "properties": {
+                    "id": {
+                        "type": "string",
+                        "format": "uuid"
+                    },
+                    "sku": {
+                        "type": "string",
+                        "example": "KEY-CS2-PRIME"
+                    },
+                    "quantity": {
+                        "type": "integer",
+                        "example": 1
+                    },
+                    "unit_price": {
+                        "type": "number",
+                        "format": "float",
+                        "example": 1290
+                    },
+                    "amount": {
+                        "type": "number",
+                        "format": "float",
+                        "example": 1290
+                    },
+                    "currency": {
+                        "type": "string",
+                        "example": "RUB"
+                    },
+                    "status": {
+                        "type": "string",
+                        "example": "pending"
+                    },
+                    "issued_code": {
+                        "type": "string",
+                        "nullable": true
+                    },
+                    "supplier": {
+                        "type": "string",
+                        "example": "primary",
+                        "nullable": true
+                    },
+                    "delivered_at": {
+                        "type": "string",
+                        "format": "date-time",
+                        "nullable": true
+                    },
+                    "refunded_at": {
+                        "type": "string",
+                        "format": "date-time",
                         "nullable": true
                     }
                 },
@@ -359,13 +603,21 @@
                         "example": "RUB"
                     },
                     "status": {
+                        "description": "created|paid|delivering|delivered|partially_delivered|refunded|payment_failed|...",
                         "type": "string",
-                        "example": "delivered"
+                        "example": "partially_delivered"
                     },
                     "issued_code": {
+                        "description": "Legacy single-item; для multi-item смотри items[].issued_code",
                         "type": "string",
                         "example": "CODE-123",
                         "nullable": true
+                    },
+                    "items": {
+                        "type": "array",
+                        "items": {
+                            "$ref": "#/components/schemas/OrderItem"
+                        }
                     },
                     "created_at": {
                         "type": "string",
@@ -532,6 +784,13 @@
                             "type": "string"
                         }
                     },
+                    "unbalanced_orders": {
+                        "description": "Заказы где paid != delivered + refunded",
+                        "type": "array",
+                        "items": {
+                            "type": "string"
+                        }
+                    },
                     "ledger_balanced": {
                         "type": "boolean",
                         "example": true
@@ -541,6 +800,10 @@
                         "format": "float"
                     },
                     "ledger_delivery_sum": {
+                        "type": "number",
+                        "format": "float"
+                    },
+                    "ledger_refund_sum": {
                         "type": "number",
                         "format": "float"
                     },
@@ -565,6 +828,82 @@
                     }
                 },
                 "type": "object"
+            },
+            "DeliveryProgressResponse": {
+                "properties": {
+                    "queue_depth": {
+                        "type": "integer"
+                    },
+                    "orders_paid_waiting": {
+                        "type": "integer"
+                    },
+                    "orders_delivering": {
+                        "type": "integer"
+                    },
+                    "orders_delivered": {
+                        "type": "integer"
+                    },
+                    "orders_partially_delivered": {
+                        "type": "integer"
+                    },
+                    "items_delivered": {
+                        "type": "integer"
+                    },
+                    "items_pending": {
+                        "type": "integer"
+                    },
+                    "generated_at": {
+                        "type": "string",
+                        "format": "date-time"
+                    }
+                },
+                "type": "object"
+            },
+            "OrderAsOfResponse": {
+                "properties": {
+                    "as_of": {
+                        "type": "string",
+                        "format": "date-time"
+                    },
+                    "order": {
+                        "type": "object"
+                    },
+                    "money": {
+                        "type": "object"
+                    },
+                    "events_applied": {
+                        "type": "integer"
+                    }
+                },
+                "type": "object"
+            },
+            "FinancePeriodResponse": {
+                "properties": {
+                    "from": {
+                        "type": "string",
+                        "format": "date-time"
+                    },
+                    "to": {
+                        "type": "string",
+                        "format": "date-time"
+                    },
+                    "payment_received": {
+                        "type": "number"
+                    },
+                    "delivery_completed": {
+                        "type": "number"
+                    },
+                    "refund_issued": {
+                        "type": "number"
+                    },
+                    "net": {
+                        "type": "number"
+                    },
+                    "counts": {
+                        "type": "object"
+                    }
+                },
+                "type": "object"
             }
         },
         "securitySchemes": {
@@ -583,7 +922,7 @@
         },
         {
             "name": "Orders",
-            "description": "Создание и просмотр заказов"
+            "description": "Создание и просмотр заказов (items[] / legacy sku)"
         },
         {
             "name": "Payment",
@@ -595,7 +934,7 @@
         },
         {
             "name": "Admin",
-            "description": "Сверка ledger и recovery (X-Admin-Token)"
+            "description": "Reconcile, recovery, delivery-progress, as-of, finance period (X-Admin-Token)"
         }
     ]
 }

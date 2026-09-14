@@ -6,14 +6,15 @@ use OpenApi\Attributes as OA;
 
 #[OA\Info(
     title: 'Digital Store Core API',
-    version: '1.0.0',
+    version: '2.0.0',
+    description: 'Этапы 1-2: multi-item orders, partial/refund, untrusted supplier, admin reconcile/recover, rate-limit progress, point-in-time.',
 )]
 #[OA\Server(url: 'http://localhost:8080', description: 'Local Docker')]
 #[OA\Tag(name: 'Health', description: 'Проверка доступности сервиса')]
-#[OA\Tag(name: 'Orders', description: 'Создание и просмотр заказов')]
+#[OA\Tag(name: 'Orders', description: 'Создание и просмотр заказов (items[] / legacy sku)')]
 #[OA\Tag(name: 'Payment', description: 'Платежные webhook от провайдера')]
 #[OA\Tag(name: 'Catalog', description: 'Витрина: SKU, цены и остатки')]
-#[OA\Tag(name: 'Admin', description: 'Сверка ledger и recovery (X-Admin-Token)')]
+#[OA\Tag(name: 'Admin', description: 'Reconcile, recovery, delivery-progress, as-of, finance period (X-Admin-Token)')]
 #[OA\Components(
     securitySchemes: [
         new OA\SecurityScheme(
@@ -27,10 +28,38 @@ use OpenApi\Attributes as OA;
     schemas: [
         new OA\Schema(
             schema: 'CreateOrderRequest',
-            required: ['sku'],
             properties: [
-                new OA\Property(property: 'sku', description: 'SKU товара', type: 'string', example: 'KEY-CS2-PRIME'),
+                new OA\Property(property: 'sku', description: 'SKU одного товара (legacy). Либо sku, либо items.', type: 'string', example: 'KEY-CS2-PRIME'),
+                new OA\Property(
+                    property: 'items',
+                    description: 'Позиции заказа (задача 1 этапа 2: несколько товаров)',
+                    type: 'array',
+                    items: new OA\Items(
+                        required: ['sku'],
+                        properties: [
+                            new OA\Property(property: 'sku', type: 'string', example: 'KEY-CS2-PRIME'),
+                            new OA\Property(property: 'qty', type: 'integer', example: 1),
+                        ],
+                        type: 'object',
+                    ),
+                ),
                 new OA\Property(property: 'public_id', type: 'string', nullable: true, example: 'ord_abc123xyz0'),
+            ],
+        ),
+        new OA\Schema(
+            schema: 'OrderItem',
+            properties: [
+                new OA\Property(property: 'id', type: 'string', format: 'uuid'),
+                new OA\Property(property: 'sku', type: 'string', example: 'KEY-CS2-PRIME'),
+                new OA\Property(property: 'quantity', type: 'integer', example: 1),
+                new OA\Property(property: 'unit_price', type: 'number', format: 'float', example: 1290),
+                new OA\Property(property: 'amount', type: 'number', format: 'float', example: 1290),
+                new OA\Property(property: 'currency', type: 'string', example: 'RUB'),
+                new OA\Property(property: 'status', type: 'string', example: 'pending'),
+                new OA\Property(property: 'issued_code', type: 'string', nullable: true),
+                new OA\Property(property: 'supplier', type: 'string', nullable: true, example: 'primary'),
+                new OA\Property(property: 'delivered_at', type: 'string', format: 'date-time', nullable: true),
+                new OA\Property(property: 'refunded_at', type: 'string', format: 'date-time', nullable: true),
             ],
         ),
         new OA\Schema(
@@ -40,8 +69,9 @@ use OpenApi\Attributes as OA;
                 new OA\Property(property: 'sku', type: 'string', example: 'KEY-CS2-PRIME'),
                 new OA\Property(property: 'amount', type: 'number', format: 'float', example: 1500),
                 new OA\Property(property: 'currency', type: 'string', example: 'RUB'),
-                new OA\Property(property: 'status', type: 'string', example: 'delivered'),
-                new OA\Property(property: 'issued_code', type: 'string', nullable: true, example: 'CODE-123'),
+                new OA\Property(property: 'status', type: 'string', example: 'partially_delivered', description: 'created|paid|delivering|delivered|partially_delivered|refunded|payment_failed|...'),
+                new OA\Property(property: 'issued_code', type: 'string', nullable: true, example: 'CODE-123', description: 'Legacy single-item; для multi-item смотри items[].issued_code'),
+                new OA\Property(property: 'items', type: 'array', items: new OA\Items(ref: '#/components/schemas/OrderItem')),
                 new OA\Property(property: 'created_at', type: 'string', format: 'date-time', nullable: true),
                 new OA\Property(property: 'paid_at', type: 'string', format: 'date-time', nullable: true),
                 new OA\Property(property: 'delivered_at', type: 'string', format: 'date-time', nullable: true),
@@ -103,9 +133,11 @@ use OpenApi\Attributes as OA;
             properties: [
                 new OA\Property(property: 'paid_not_delivered', type: 'array', items: new OA\Items(type: 'string')),
                 new OA\Property(property: 'delivered_not_paid', type: 'array', items: new OA\Items(type: 'string')),
+                new OA\Property(property: 'unbalanced_orders', type: 'array', items: new OA\Items(type: 'string'), description: 'Заказы где paid != delivered + refunded'),
                 new OA\Property(property: 'ledger_balanced', type: 'boolean', example: true),
                 new OA\Property(property: 'ledger_payment_sum', type: 'number', format: 'float'),
                 new OA\Property(property: 'ledger_delivery_sum', type: 'number', format: 'float'),
+                new OA\Property(property: 'ledger_refund_sum', type: 'number', format: 'float'),
                 new OA\Property(property: 'generated_at', type: 'string', format: 'date-time'),
             ],
         ),
@@ -114,6 +146,40 @@ use OpenApi\Attributes as OA;
             properties: [
                 new OA\Property(property: 'recovered', type: 'integer', example: 2),
                 new OA\Property(property: 'order_ids', type: 'array', items: new OA\Items(type: 'string')),
+            ],
+        ),
+        new OA\Schema(
+            schema: 'DeliveryProgressResponse',
+            properties: [
+                new OA\Property(property: 'queue_depth', type: 'integer'),
+                new OA\Property(property: 'orders_paid_waiting', type: 'integer'),
+                new OA\Property(property: 'orders_delivering', type: 'integer'),
+                new OA\Property(property: 'orders_delivered', type: 'integer'),
+                new OA\Property(property: 'orders_partially_delivered', type: 'integer'),
+                new OA\Property(property: 'items_delivered', type: 'integer'),
+                new OA\Property(property: 'items_pending', type: 'integer'),
+                new OA\Property(property: 'generated_at', type: 'string', format: 'date-time'),
+            ],
+        ),
+        new OA\Schema(
+            schema: 'OrderAsOfResponse',
+            properties: [
+                new OA\Property(property: 'as_of', type: 'string', format: 'date-time'),
+                new OA\Property(property: 'order', type: 'object'),
+                new OA\Property(property: 'money', type: 'object'),
+                new OA\Property(property: 'events_applied', type: 'integer'),
+            ],
+        ),
+        new OA\Schema(
+            schema: 'FinancePeriodResponse',
+            properties: [
+                new OA\Property(property: 'from', type: 'string', format: 'date-time'),
+                new OA\Property(property: 'to', type: 'string', format: 'date-time'),
+                new OA\Property(property: 'payment_received', type: 'number'),
+                new OA\Property(property: 'delivery_completed', type: 'number'),
+                new OA\Property(property: 'refund_issued', type: 'number'),
+                new OA\Property(property: 'net', type: 'number'),
+                new OA\Property(property: 'counts', type: 'object'),
             ],
         ),
     ],
